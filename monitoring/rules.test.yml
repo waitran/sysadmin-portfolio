@@ -1,0 +1,159 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 5s
+
+tests:
+  - name: healthy traffic keeps alerts quiet and records useful signals
+    interval: 5s
+    input_series:
+      - series: 'up{job="demo",instance="demo:8080"}'
+        values: '1+0x120'
+      - series: 'demo_http_requests_total{status="200"}'
+        values: '0+10x120'
+      - series: 'demo_http_requests_total{status="500"}'
+        values: '0+0x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.1"}'
+        values: '0+10x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.3"}'
+        values: '0+10x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.5"}'
+        values: '0+10x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="1"}'
+        values: '0+10x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="2.5"}'
+        values: '0+10x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+10x120'
+      - series: demo_http_request_duration_seconds_count
+        values: '0+10x120'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DemoServiceDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: DemoHighErrorRate
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: DemoHighLatency
+        exp_alerts: []
+    promql_expr_test:
+      - expr: demo:requests:rate5m
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="demo:requests:rate5m"}'
+            value: 2
+      - expr: demo:errors:ratio5m
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="demo:errors:ratio5m"}'
+            value: 0
+      - expr: demo:latency:p95_5m
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="demo:latency:p95_5m"}'
+            value: 0.095
+
+  - name: high error ratio needs sustained traffic and a full minute
+    interval: 5s
+    input_series:
+      - series: 'demo_http_requests_total{status="200"}'
+        values: '0+9x120'
+      - series: 'demo_http_requests_total{status="500"}'
+        values: '0+1x120'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DemoHighErrorRate
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: DemoHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Demo error ratio exceeds 5%
+              description: More than 5% of valid work operations failed over 5 minutes, with sufficient traffic.
+
+  - name: low traffic suppresses error ratio alert
+    interval: 5s
+    input_series:
+      - series: 'demo_http_requests_total{status="200"}'
+        values: '0+0x120'
+      - series: 'demo_http_requests_total{status="500"}'
+        values: '0+0.1x120'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DemoHighErrorRate
+        exp_alerts: []
+
+  - name: unavailable service must stay down for thirty seconds
+    interval: 5s
+    input_series:
+      - series: 'up{job="demo",instance="demo:8080"}'
+        values: '0+0x24'
+    alert_rule_test:
+      - eval_time: 25s
+        alertname: DemoServiceDown
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: DemoServiceDown
+        exp_alerts:
+          - exp_labels:
+              job: demo
+              instance: demo:8080
+              severity: critical
+            exp_annotations:
+              summary: Demo service is unreachable
+              description: Prometheus has failed to scrape the demo service for at least 30 seconds.
+
+  - name: high p95 latency fires after a full minute
+    interval: 5s
+    input_series:
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.1"}'
+        values: '0+0x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.3"}'
+        values: '0+0x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.5"}'
+        values: '0+0x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="1"}'
+        values: '0+10x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="2.5"}'
+        values: '0+10x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+10x120'
+      - series: demo_http_request_duration_seconds_count
+        values: '0+10x120'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: DemoHighLatency
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: DemoHighLatency
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Demo p95 latency exceeds 500 ms
+              description: The estimated 95th percentile work duration exceeded 500 ms over 5 minutes, with sufficient traffic.
+
+  - name: low traffic suppresses latency alert
+    interval: 5s
+    input_series:
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.1"}'
+        values: '0+0x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.3"}'
+        values: '0+0x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="0.5"}'
+        values: '0+0x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="1"}'
+        values: '0+0.1x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="2.5"}'
+        values: '0+0.1x120'
+      - series: 'demo_http_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+0.1x120'
+      - series: demo_http_request_duration_seconds_count
+        values: '0+0.1x120'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DemoHighLatency
+        exp_alerts: []

@@ -1,0 +1,67 @@
+name: Portfolio checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portfolio-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Test HTTP service and metrics
+        run: make test
+      - name: Validate Compose and Prometheus configuration
+        run: make check-config
+      - name: Test alert rules with synthetic time series
+        run: make test-rules
+      - name: Build and start the lab
+        run: make up
+      - name: Check the running service
+        run: make smoke
+      - name: Verify healthy and injected error traffic
+        run: |
+          python3 scripts/load.py --requests 40 --failure-every 4 --interval 0.01
+          python3 scripts/load.py --requests 8 --delay-ms 600 --interval 0.01
+      - name: Verify Prometheus scrapes the demo
+        run: |
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+
+          url = 'http://127.0.0.1:9090/api/v1/query?' + urllib.parse.urlencode({'query': 'up{job="demo"}'})
+          for attempt in range(12):
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      result = json.load(response)['data']['result']
+              except OSError:
+                  result = []
+              if result and result[0]['value'][1] == '1':
+                  break
+              time.sleep(2)
+          else:
+              raise SystemExit('Prometheus did not scrape the demo')
+          print('PASS Prometheus scrape')
+          PY
+      - name: Show diagnostics
+        if: failure()
+        run: make logs
+      - name: Stop the lab
+        if: always()
+        run: docker compose down --volumes

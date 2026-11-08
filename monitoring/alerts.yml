@@ -1,0 +1,36 @@
+groups:
+  - name: demo-service
+    rules:
+      - record: demo:requests:rate5m
+        expr: sum(rate(demo_http_requests_total[5m]))
+      - record: demo:errors:ratio5m
+        expr: sum(rate(demo_http_requests_total{status="500"}[5m])) / clamp_min(sum(rate(demo_http_requests_total[5m])), 1e-9)
+      - record: demo:latency:p95_5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(demo_http_request_duration_seconds_bucket[5m])))
+
+      - alert: DemoServiceDown
+        expr: up{job="demo"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: Demo service is unreachable
+          description: Prometheus has failed to scrape the demo service for at least 30 seconds.
+
+      - alert: DemoHighErrorRate
+        expr: (demo:errors:ratio5m > 0.05) and (demo:requests:rate5m > 0.1)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Demo error ratio exceeds 5%
+          description: More than 5% of valid work operations failed over 5 minutes, with sufficient traffic.
+
+      - alert: DemoHighLatency
+        expr: (demo:latency:p95_5m > 0.5) and (sum(rate(demo_http_request_duration_seconds_count[5m])) > 0.1)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Demo p95 latency exceeds 500 ms
+          description: The estimated 95th percentile work duration exceeded 500 ms over 5 minutes, with sufficient traffic.
